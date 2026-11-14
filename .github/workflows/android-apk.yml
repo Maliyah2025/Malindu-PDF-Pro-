@@ -75,6 +75,25 @@ jobs:
           grep -q 'fun scheduleAutoHide' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
           test -f app/src/main/java/com/malindu/pdfpro/PdfLibraryProvider.kt
 
+      - name: Enable advanced PDFium reader, page overview and WPS-style annotation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat patches/wps-v3.part01 patches/wps-v3.part02 patches/wps-v3.part03 patches/wps-v3.part04 | base64 -d > /tmp/pdfpro-v3.patch.xz
+          echo "04e6337fa55e58b6b5b979aeb401d2999954853369fd62680c6ce9d00478c5e8  /tmp/pdfpro-v3.patch.xz" | sha256sum --check
+          xz -dc /tmp/pdfpro-v3.patch.xz > /tmp/pdfpro-v3.patch
+          git apply --check /tmp/pdfpro-v3.patch
+          git apply /tmp/pdfpro-v3.patch
+          sed -i 's/versionCode = 3/versionCode = 4/; s/versionName = "1.2.0"/versionName = "1.3.0"/' app/build.gradle.kts
+          cat >> app/build.gradle.kts <<'GRADLE'
+          // PDFium native tiled rendering enables continuous scrolling and crisp pinch zoom.
+          dependencies {
+              implementation("com.github.mhiew:android-pdf-viewer:3.2.0-beta.3")
+          }
+          GRADLE
+          grep -q 'class ProPdfView' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
+          grep -q 'versionName = "1.3.0"' app/build.gradle.kts
+
       - name: Compile installable Android APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
