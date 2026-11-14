@@ -93,6 +93,8 @@ jobs:
           GRADLE
           # Resolve Kotlin name collisions with PDFView's built-in resetZoom and page getter.
           sed -i 's/fun resetZoom() {/fun resetZoomSmart() {/' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
+          sed -i 's/var nightMode: Boolean/var readingNightMode: Boolean/; s/\.nightMode(nightMode)/.nightMode(readingNightMode)/' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
+          sed -i 's/view.nightMode/view.readingNightMode/g' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
           sed -i 's/view.resetZoom()/view.resetZoomSmart()/g' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
           sed -i 's/^                currentPage = page$/                this@ReaderActivity.currentPage = page/' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
           grep -q 'class ProPdfView' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
