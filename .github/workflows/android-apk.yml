@@ -1,0 +1,71 @@
+name: Build Malindu PDF Pro APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Android project from source parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat archive/part01.txt archive/part02.txt archive/part03.txt archive/part04.txt | base64 --decode > source.tar.xz
+          echo "1e6aebb65a4563c94bc9c61727e2fec52a510436c3af9b480696cb343e11e153  source.tar.xz" | sha256sum --check
+          tar --extract --xz --file source.tar.xz
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/build.gradle.kts
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Platform 35 and Build Tools
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.14
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+
+      - name: Compile installable Android APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Prepare direct APK download
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk Malindu_PDF_Pro.apk
+          test -s Malindu_PDF_Pro.apk
+          ls -lh Malindu_PDF_Pro.apk
+
+      - name: Upload installable APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Malindu-PDF-Pro-APK
+          path: Malindu_PDF_Pro.apk
+          if-no-files-found: error
+
+      - name: Publish direct APK to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-build-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Malindu PDF Pro Build ${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          files: Malindu_PDF_Pro.apk
+          body: |
+            Download Malindu_PDF_Pro.apk below to install on Android 8.0+.
+            The APK is debug-signed. Back up annotated PDFs before uninstalling earlier builds.
