@@ -469,6 +469,11 @@ class MainWindow(QMainWindow):
     def restore_last_document(self):
         """Open the previous PDF automatically, even after Windows restarts."""
         key = self.settings.value("last_open_id", "", type=str)
+        if not key or not self.library.get(key):
+            # First launch after upgrading an older EXE: use its saved
+            # Recent Documents history instead of starting from a blank home.
+            recent = self.library.all()
+            key = recent[0]["id"] if recent else ""
         if key and self.active_id is None and self.library.get(key):
             self.open_record(key)
 
