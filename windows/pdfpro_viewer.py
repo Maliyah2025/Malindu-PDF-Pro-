@@ -411,7 +411,8 @@ class PDFCanvas(QGraphicsView):
                 with fitz.open(str(staged)) as check:
                     if not check.is_pdf or len(check) != len(self.pdf):
                         raise RuntimeError("New PDF failed verification")
-                with open(staged, "rb") as stream:
+                with open(staged, "r+b") as stream:
+                    stream.flush()
                     os.fsync(stream.fileno())
                 shutil.copy2(target, backup_temp)
                 os.replace(backup_temp, backup)
