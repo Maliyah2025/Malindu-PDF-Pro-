@@ -36,8 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "Android SDK root: ${ANDROID_HOME:-${ANDROID_SDK_ROOT:-unset}}"
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
-          sdkmanager --list_installed | head -50
+          SDKMGR="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMGR"
+          echo "Using Android SDK manager: $SDKMGR"
+          "$SDKMGR" --sdk_root="$ANDROID_HOME" --install "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMGR" --sdk_root="$ANDROID_HOME" --list_installed | sed -n '1,40p'
 
       - name: Set up Gradle 8.14
         uses: gradle/actions/setup-gradle@v4
