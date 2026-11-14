@@ -49,7 +49,9 @@ jobs:
       - name: Package standalone Windows 10/11 x64 EXE
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Malindu_PDF_Pro_Windows_x64 --icon windows/icon.ico --paths windows --hidden-import PySide6.QtPrintSupport --hidden-import fitz --collect-submodules pymupdf --distpath dist --workpath build --specpath build windows/MalinduPDFPro.py
+          $iconPath = (Resolve-Path windows/icon.ico).Path
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Malindu_PDF_Pro_Windows_x64 --icon "$iconPath" --paths windows --hidden-import PySide6.QtPrintSupport --hidden-import fitz --collect-submodules pymupdf --distpath dist --workpath build --specpath build windows/MalinduPDFPro.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
           if (!(Test-Path dist/Malindu_PDF_Pro_Windows_x64.exe)) { throw "EXE missing" }
           $exe = Get-Item dist/Malindu_PDF_Pro_Windows_x64.exe
           Write-Host "Built EXE bytes: $($exe.Length)"
