@@ -52,6 +52,15 @@ jobs:
         run: |
           sed -i 's/singleLine = true/setSingleLine(true)/g' app/src/main/java/com/malindu/pdfpro/MainActivity.kt app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
 
+      - name: Apply immersive fullscreen and floating annotation toolbar
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check patches/immersive.patch
+          git apply patches/immersive.patch
+          sed -i 's/versionCode = 1/versionCode = 2/; s/versionName = "1.0.0"/versionName = "1.1.0"/' app/build.gradle.kts
+          grep -q 'fun buildCompactToolbar' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
+
       - name: Compile installable Android APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
