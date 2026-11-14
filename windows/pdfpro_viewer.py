@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import math
+import os
+import shutil
+import uuid
 from pathlib import Path
 
 import fitz
@@ -19,6 +22,7 @@ class PDFCanvas(QGraphicsView):
     zoom_changed = Signal(int)
     operation_done = Signal(str)
     error = Signal(str)
+    context_requested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -255,6 +259,11 @@ class PDFCanvas(QGraphicsView):
         super().wheelEvent(event)
         self._schedule_render()
 
+    def contextMenuEvent(self, event):
+        """Right-click anywhere on the PDF to recover the compact tools."""
+        self.context_requested.emit(event.globalPos())
+        event.accept()
+
     def mouseDoubleClickEvent(self, event):
         if self.tool == "hand" and event.button() == Qt.MouseButton.LeftButton:
             self.zoom_by(1.5 if self.zoom < 3 else 1/1.5)
@@ -375,10 +384,62 @@ class PDFCanvas(QGraphicsView):
         event.accept()
 
     def _save_changes(self):
-        if self.pdf:
+        """Durably autosave every completed action, including damaged/repaired PDFs.
+
+        MuPDF refuses incremental writes on a repaired document (error code 4).
+        For those files write a complete PDF beside the original, then atomically
+        replace the owned library copy. The original imported user file is never
+        changed. A recovery copy is kept in case an update is interrupted.
+        """
+        if not self.pdf:
+            return
+        if self.pdf.can_save_incrementally():
             self.pdf.saveIncr()
-            self.render_scales.clear()
-            self._schedule_render()
+        else:
+            target = Path(self.filename)
+            staged = target.with_name(target.name + ".saving-" + uuid.uuid4().hex + ".pdf")
+            backup = target.with_name(target.name + ".recovery.pdf")
+            backup_temp = target.with_name(target.name + ".recovery.tmp")
+            current_center = self.mapToScene(self.viewport().rect().center())
+            current_page = self.last_page
+
+            # A completed staged file is valid even if power fails before replace.
+            # Do not close the current document unless the entire save succeeded.
+            try:
+                self.pdf.save(str(staged), garbage=0, deflate=True,
+                              encryption=fitz.PDF_ENCRYPT_KEEP)
+                with fitz.open(str(staged)) as check:
+                    if not check.is_pdf or len(check) != len(self.pdf):
+                        raise RuntimeError("New PDF failed verification")
+                with open(staged, "rb") as stream:
+                    os.fsync(stream.fileno())
+                shutil.copy2(target, backup_temp)
+                os.replace(backup_temp, backup)
+            except Exception:
+                backup_temp.unlink(missing_ok=True)
+                # Preserve the staged PDF on disk if one was fully written.
+                raise
+
+            # Windows does not allow replacing a PDF while MuPDF has it open.
+            self.pdf.close()
+            self.pdf = None
+            try:
+                os.replace(staged, target)
+            except Exception:
+                self.pdf = fitz.open(str(target))
+                raise RuntimeError("Could not replace the saved PDF. "
+                                   f"Recovery file is available at: {staged}")
+            self.pdf = fitz.open(str(target))
+            self._make_layout()
+            self.last_page = current_page
+            self.centerOn(current_center)
+            self._emit_page()
+
+        # Force fresh tiles so the annotation immediately appears.
+        self.render_scales.clear()
+        for item in self.pix_items:
+            item.setPixmap(QPixmap())
+        self._schedule_render()
 
     def insert_text(self, index, scene_pos, note=False):
         label = "Sticky note" if note else "Text annotation"
