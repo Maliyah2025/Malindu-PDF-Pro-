@@ -1,0 +1,198 @@
+--- a/app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
++++ b/app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
+@@ -28,6 +28,7 @@
+ import android.view.View
+ import android.widget.EditText
+ import android.widget.HorizontalScrollView
++import android.widget.FrameLayout
+ import android.widget.LinearLayout
+ import android.widget.SeekBar
+ import android.widget.TextView
+@@ -49,9 +50,15 @@
+     private var exportPages: List<Int>? = null
+     private val exportCode = 201
+     private var fullscreen = false
++    private var activeTool = "move"
++    private val regularControls = mutableListOf<View>()
++    private val compactModes = linkedMapOf<String, TextView>()
++    private lateinit var compactToolbar: LinearLayout
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
++        fullscreen = savedInstanceState?.getBoolean("pdf_fullscreen") ?: false
++        activeTool = savedInstanceState?.getString("pdf_tool") ?: "move"
+         val u = intent.data
+         if (u == null) { finish(); return }
+         pdfUri = u
+@@ -72,12 +79,27 @@
+         }
+     }
+ 
++    override fun onSaveInstanceState(outState: Bundle) {
++        outState.putBoolean("pdf_fullscreen", fullscreen)
++        outState.putString("pdf_tool", activeTool)
++        super.onSaveInstanceState(outState)
++    }
++
++    @Deprecated("Back button also exits immersive reader")
++    override fun onBackPressed() {
++        if (fullscreen) setFullscreen(false) else super.onBackPressed()
++    }
++
+     private fun buildUi() {
++        regularControls.clear()
++        compactModes.clear()
++        val frame = FrameLayout(this).apply { setBackgroundColor(Ui.background) }
+         val root = LinearLayout(this).apply {
+             orientation = LinearLayout.VERTICAL
+             setBackgroundColor(Ui.background)
+         }
+-        setContentView(root)
++        frame.addView(root, FrameLayout.LayoutParams(-1, -1))
++        setContentView(frame)
+         val heading = Ui.row(this).apply {
+             setPadding(Ui.dp(this@ReaderActivity, 12), Ui.dp(this@ReaderActivity, 8),
+                 Ui.dp(this@ReaderActivity, 12), Ui.dp(this@ReaderActivity, 8))
+@@ -93,8 +115,10 @@
+         toolbarLabel = Ui.label(this, "Offline PDF editor", 11f, color = Ui.subtle)
+         docInfo.addView(toolbarLabel)
+         heading.addView(docInfo, LinearLayout.LayoutParams(0, -2, 1f))
++        heading.addView(Ui.button(this, "⛶ Full") { toggleFullscreen() })
+         heading.addView(Ui.button(this, "↗ Share") { share(pdfUri) })
+         root.addView(heading)
++        regularControls.add(heading)
+ 
+         view = InkPageView(this).apply {
+             onInkChanged = { strokes -> store.saveStrokes(pdfUri.toString(), currentPage, strokes) }
+@@ -115,8 +139,10 @@
+         navigation.addView(pageIndicator, LinearLayout.LayoutParams(0, -2, 1f))
+         navigation.addView(Ui.button(this, "Next ▶") { loadPage(currentPage + 1) })
+         root.addView(navigation)
++        regularControls.add(navigation)
+ 
+         val essential = toolsRow(root)
++        tool(essential, "⛶ Full screen") { toggleFullscreen() }
+         tool(essential, "✎ Pen") { activate("pen") }
+         tool(essential, "▰ Highlight") { activate("highlighter") }
+         tool(essential, "⌫ Erase") { activate("eraser") }
+@@ -142,7 +168,9 @@
+         tool(more, "✂ Extract pages") { extractPages() }
+         tool(more, "↗ Export & share") { beginExport(true) }
+         tool(more, "⋯ More") { showMoreTools() }
+-        activate("move")
++        buildCompactToolbar(frame)
++        activate(activeTool)
++        applyFullscreen()
+     }
+ 
+     private fun toolsRow(root: LinearLayout): LinearLayout {
+@@ -156,6 +184,7 @@
+         }
+         scroll.addView(row)
+         root.addView(scroll)
++        regularControls.add(scroll)
+         return row
+     }
+ 
+@@ -166,8 +195,78 @@
+     }
+ 
+     private fun activate(tool: String) {
++        activeTool = tool
+         view.changeMode(tool)
+         toolbarLabel.text = if (tool == "move") "Read • Swipe pages • Pinch to zoom" else "Editing: $tool • Auto-save ON"
++        compactModes.forEach { (mode, button) ->
++            button.background = if (mode == tool) Ui.bg(Ui.blue, 9, this)
++                else Ui.bg(Color.TRANSPARENT, 9, this)
++        }
++    }
++
++    /** Tiny floating ink controls: full PDF surface remains underneath. */
++    private fun buildCompactToolbar(frame: FrameLayout) {
++        compactToolbar = Ui.row(this).apply {
++            setPadding(Ui.dp(this@ReaderActivity, 3), Ui.dp(this@ReaderActivity, 3),
++                Ui.dp(this@ReaderActivity, 3), Ui.dp(this@ReaderActivity, 3))
++            background = Ui.bg(Color.argb(236, 24, 34, 55), 14, this@ReaderActivity)
++            elevation = Ui.dp(this@ReaderActivity, 7).toFloat()
++            visibility = View.GONE
++        }
++        fun addButton(label: String, mode: String? = null, action: () -> Unit) {
++            val button = TextView(this).apply {
++                text = label
++                textSize = 16f
++                setTextColor(Color.WHITE)
++                gravity = Gravity.CENTER
++                minWidth = Ui.dp(this@ReaderActivity, 34)
++                minHeight = Ui.dp(this@ReaderActivity, 34)
++                setPadding(Ui.dp(this@ReaderActivity, 5), Ui.dp(this@ReaderActivity, 3),
++                    Ui.dp(this@ReaderActivity, 5), Ui.dp(this@ReaderActivity, 3))
++                setOnClickListener { action() }
++                contentDescription = when (mode) {
++                    "pen" -> "Pen"
++                    "highlighter" -> "Highlight"
++                    "eraser" -> "Erase"
++                    "move" -> "Move and zoom"
++                    else -> label
++                }
++            }
++            compactToolbar.addView(button, LinearLayout.LayoutParams(-2, -2))
++            if (mode != null) compactModes[mode] = button
++        }
++        addButton("✎", "pen") { activate("pen") }
++        addButton("▰", "highlighter") { activate("highlighter") }
++        addButton("⌫", "eraser") { activate("eraser") }
++        addButton("✋", "move") { activate("move") }
++        addButton("●") { chooseColor() }
++        addButton("↶") { view.undo() }
++        addButton("⟳") { toggleScreenOrientation() }
++        addButton("✕") { setFullscreen(false) }
++        frame.addView(compactToolbar, FrameLayout.LayoutParams(-2, -2,
++            Gravity.TOP or Gravity.END).apply {
++            setMargins(Ui.dp(this@ReaderActivity, 4), Ui.dp(this@ReaderActivity, 6),
++                Ui.dp(this@ReaderActivity, 6), 0)
++        })
++    }
++
++    private fun applyFullscreen() {
++        regularControls.forEach { it.visibility = if (fullscreen) View.GONE else View.VISIBLE }
++        if (::compactToolbar.isInitialized) compactToolbar.visibility = if (fullscreen) View.VISIBLE else View.GONE
++        @Suppress("DEPRECATION")
++        window.decorView.systemUiVisibility = if (fullscreen) {
++            (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
++             View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
++             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
++             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
++             View.SYSTEM_UI_FLAG_FULLSCREEN or
++             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
++        } else View.SYSTEM_UI_FLAG_VISIBLE
++    }
++
++    private fun setFullscreen(enabled: Boolean) {
++        fullscreen = enabled
++        applyFullscreen()
+     }
+ 
+     private fun loadPage(index: Int) {
+@@ -207,6 +306,8 @@
+ 
+     private fun toggleScreenOrientation() {
+         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
++        // Rotating while annotating keeps the active tool and immersive display.
++        setFullscreen(true)
+         requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+         else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+     }
+@@ -294,12 +395,7 @@
+     }
+ 
+     private fun toggleFullscreen() {
+-        fullscreen = !fullscreen
+-        @Suppress("DEPRECATION")
+-        window.decorView.systemUiVisibility = if (fullscreen) {
+-            (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+-        } else 0
++        setFullscreen(!fullscreen)
+     }
+ 
+     private fun chooseBrightness() {
