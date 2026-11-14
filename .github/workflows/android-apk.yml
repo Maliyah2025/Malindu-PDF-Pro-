@@ -47,6 +47,11 @@ jobs:
         with:
           gradle-version: '8.14'
 
+      - name: Fix Android EditText single-line Kotlin compatibility
+        shell: bash
+        run: |
+          sed -i 's/singleLine = true/setSingleLine(true)/g' app/src/main/java/com/malindu/pdfpro/MainActivity.kt app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
+
       - name: Compile installable Android APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
