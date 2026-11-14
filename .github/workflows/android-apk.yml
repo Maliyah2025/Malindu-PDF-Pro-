@@ -31,11 +31,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android Platform 35 and Build Tools
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Use GitHub runner Android SDK and install Platform 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Android SDK root: ${ANDROID_HOME:-${ANDROID_SDK_ROOT:-unset}}"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --list_installed | head -50
 
       - name: Set up Gradle 8.14
         uses: gradle/actions/setup-gradle@v4
