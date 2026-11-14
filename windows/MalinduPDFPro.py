@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import fitz
-from PySide6.QtCore import Qt, QTimer, Signal, QSize
+from PySide6.QtCore import Qt, QTimer, Signal, QSize, QSettings
 from PySide6.QtGui import QColor, QIcon, QPainter, QFont, QPixmap, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QToolButton,
@@ -25,7 +25,7 @@ from pdfpro_library import Library, pretty_bytes
 from pdfpro_viewer import PDFCanvas
 
 APP_NAME = "Malindu PDF Pro"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 def app_icon():
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.library = Library()
+        self.settings = QSettings("Malindu", "MalinduPDFPro")
         self.active_id = None
         self.focused = False
         self.active_tool = "hand"
@@ -108,6 +109,10 @@ class MainWindow(QMainWindow):
         self._toolbar_timer = QTimer(self)
         self._toolbar_timer.setSingleShot(True)
         self._toolbar_timer.timeout.connect(self.hide_tools)
+        self._view_save_timer = QTimer(self)
+        self._view_save_timer.setSingleShot(True)
+        self._view_save_timer.setInterval(650)
+        self._view_save_timer.timeout.connect(self.persist_view)
         self.setWindowTitle(f"{APP_NAME} — Windows x64")
         self.setWindowIcon(app_icon())
         self.resize(1370, 860)
@@ -119,6 +124,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready · All PDFs stay on your PC · No account required")
         if len(sys.argv) > 1 and Path(sys.argv[1]).is_file():
             QTimer.singleShot(400, lambda: self.import_files([sys.argv[1]]))
+        else:
+            # Resume the document opened before the previous app/PC shutdown.
+            QTimer.singleShot(350, self.restore_last_document)
 
     def _button(self, text, callback, primary=False, tooltip="", danger=False):
         b = QPushButton(text)
@@ -319,19 +327,12 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_changed.connect(self.zoom_changed)
         self.canvas.operation_done.connect(self.say)
         self.canvas.error.connect(self.error)
+        self.canvas.context_requested.connect(self.show_context_tools)
+        self.canvas.horizontalScrollBar().valueChanged.connect(self.schedule_view_save)
+        self.canvas.verticalScrollBar().valueChanged.connect(self.schedule_view_save)
         v.addWidget(self.canvas, 1)
-
-        # A compact floating strip — no huge controls obstruct PDF text.
-        floating = QFrame()
-        floating.setObjectName("quick")
-        quick = QHBoxLayout(floating)
-        quick.setContentsMargins(4, 4, 4, 4)
-        quick.setSpacing(0)
-        quick.addWidget(self._tool("✎", "Toggle annotation tools", self.toggle_tools))
-        quick.addWidget(self._tool("−", "Zoom out", lambda: self.canvas.zoom_by(1/1.2)))
-        quick.addWidget(self._tool("+", "Zoom in", lambda: self.canvas.zoom_by(1.2)))
-        quick.addWidget(self._tool("⛶", "Focus / fullscreen", self.toggle_fullscreen))
-        self.canvas.attach_popup(floating)
+        # No permanent floating controls. Right-click on any PDF page to see
+        # the small context toolbar, including in fullscreen annotation mode.
 
         self.reader_bottom = QFrame()
         self.reader_bottom.setObjectName("topbar")
@@ -367,7 +368,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+Minus", lambda: self.canvas.zoom_by(1/1.2)),
             ("Ctrl+0", self.canvas.fit_width), ("Ctrl+P", self.print_pdf),
             ("F11", self.toggle_fullscreen), ("Escape", self.escape_key),
-            ("Ctrl+Z", self.canvas_undo),
+            ("Ctrl+Z", self.canvas_undo), ("Ctrl+T", self.toggle_tools),
         ]:
             QShortcut(QKeySequence(seq), self).activated.connect(fn)
 
@@ -401,6 +402,7 @@ class MainWindow(QMainWindow):
             self.recent_list.addItem(item)
 
     def show_home(self):
+        self.persist_view()
         if self.focused:
             self.toggle_fullscreen()
         self.stack.setCurrentIndex(0)
@@ -464,16 +466,54 @@ class MainWindow(QMainWindow):
     def open_recent(self, item):
         self.open_record(item.data(Qt.ItemDataRole.UserRole))
 
+    def restore_last_document(self):
+        """Open the previous PDF automatically, even after Windows restarts."""
+        key = self.settings.value("last_open_id", "", type=str)
+        if key and self.active_id is None and self.library.get(key):
+            self.open_record(key)
+
+    def restore_view(self, key):
+        if self.active_id != key or not self.canvas.pdf:
+            return
+        state = self.library.view(key)
+        if not state:
+            return
+        try:
+            z = float(state.get("zoom", self.canvas.zoom))
+            x = float(state.get("center_x", 0))
+            y = float(state.get("center_y", 0))
+            self.canvas.set_zoom(z)
+            self.canvas.centerOn(x, y)
+            self.canvas._schedule_render()
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.say(f"Reopened last page (custom zoom could not be restored: {exc})")
+
+    def schedule_view_save(self, *_):
+        if self.active_id and self.canvas.pdf:
+            self._view_save_timer.start()
+
+    def persist_view(self):
+        if not self.active_id or not self.canvas.pdf:
+            return
+        point = self.canvas.mapToScene(self.canvas.viewport().rect().center())
+        self.library.mark_view(self.active_id, self.canvas.last_page,
+                               self.canvas.zoom, point.x(), point.y())
+
     def open_record(self, key):
+        self._view_save_timer.stop()
+        self.persist_view()
         rec = self.library.open_record(key)
         if not rec:
             return
+        self.active_id = None
         try:
             self.canvas.open_pdf(rec["stored"], rec["page"])
         except Exception as exc:
             QMessageBox.critical(self, "Cannot open PDF", str(exc))
             return
         self.active_id = key
+        self.settings.setValue("last_open_id", key)
+        self.settings.sync()
         self.active_tool = "hand"
         self.canvas.set_tool("hand")
         self.reader_title.setText(rec["name"])
@@ -481,6 +521,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
         self.hide_tools()
         self.refresh_library()
+        QTimer.singleShot(260, lambda: self.restore_view(key))
         self.say(f"{rec['name']} · {len(self.canvas.pdf)} pages · PDF copy stored locally")
 
     def rename_selected(self):
@@ -524,8 +565,10 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         if self.active_id in keys:
+            self._view_save_timer.stop()
             self.canvas.close_pdf()
             self.active_id = None
+            self.settings.remove("last_open_id")
         count = self.library.delete_many(keys)
         self.refresh_library()
         self.say(f"Removed {count} saved PDF(s)")
@@ -536,7 +579,7 @@ class MainWindow(QMainWindow):
         for key, btn in self.tool_widgets.items():
             btn.setProperty("active", key == name)
             self._polish(btn)
-        self.say(f"{name.title()} tool active · Changes save inside your PDF copy")
+        self.say(f"{name.title()} tool active · Each completed annotation is autosaved")
         self._toolbar_timer.start(4200)
 
     def pick_color(self):
@@ -544,6 +587,39 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self.canvas.pen_color = color
         self._toolbar_timer.start(2400)
+
+    def show_context_tools(self, global_position):
+        """Right-click the PDF to choose tools without an intrusive overlay."""
+        if not self.canvas.pdf:
+            return
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        for name, symbol, caption in [
+            ("hand", "✋", "Hand · scroll and zoom"),
+            ("pen", "✎", "Pencil"),
+            ("highlight", "▰", "Highlighter"),
+            ("underline", "U̲", "Underline"),
+            ("strike", "S̶", "Strikethrough"),
+            ("line", "／", "Line"),
+            ("rectangle", "□", "Rectangle"),
+            ("ellipse", "◯", "Ellipse"),
+            ("text", "T", "Text"),
+            ("note", "▤", "Sticky note"),
+            ("eraser", "⌫", "Eraser"),
+        ]:
+            action = menu.addAction(f"{symbol}  {caption}")
+            action.setCheckable(True)
+            action.setChecked(self.active_tool == name)
+            action.triggered.connect(lambda checked=False, mode=name: self.choose_tool(mode))
+        menu.addSeparator()
+        menu.addAction("●  Pen color", self.pick_color)
+        menu.addAction("↶  Undo last annotation", self.canvas_undo)
+        menu.addAction("☰  Show / hide full toolbar  ·  Ctrl+T", self.toggle_tools)
+        menu.addSeparator()
+        menu.addAction("＋  Zoom in", lambda: self.canvas.zoom_by(1.2))
+        menu.addAction("−  Zoom out", lambda: self.canvas.zoom_by(1/1.2))
+        menu.addAction("⛶  Toggle fullscreen  ·  F11", self.toggle_fullscreen)
+        menu.exec(global_position)
 
     def toggle_tools(self):
         self.toolbar_visible = not self.toolbar_visible
@@ -565,7 +641,7 @@ class MainWindow(QMainWindow):
         self.hide_tools()
         if self.focused:
             self.showFullScreen()
-            self.say("Focus mode · F11 or Esc to exit · ✎ opens tools")
+            self.say("Focus mode · Right-click anywhere for pencil/tools · Ctrl+T toggles toolbar · Esc exits")
         else:
             self.showNormal()
 
@@ -580,10 +656,12 @@ class MainWindow(QMainWindow):
     def page_changed(self, page, total):
         if self.active_id:
             self.library.mark_page(self.active_id, page)
+            self.schedule_view_save()
         self.page_text.setText(f"Page {page+1} / {total}")
 
     def zoom_changed(self, amount):
         self.zoom_text.setText(f"{amount}%")
+        self.schedule_view_save()
 
     def canvas_undo(self):
         self.canvas.undo()
@@ -804,6 +882,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
+            self._view_save_timer.stop()
+            self.persist_view()
             self.canvas.close_pdf()
             self.library.close()
         finally:
