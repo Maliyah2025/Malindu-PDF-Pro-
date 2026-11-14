@@ -91,6 +91,10 @@ jobs:
               implementation("com.github.mhiew:android-pdf-viewer:3.2.0-beta.3")
           }
           GRADLE
+          # Resolve Kotlin name collisions with PDFView's built-in resetZoom and page getter.
+          sed -i 's/fun resetZoom() {/fun resetZoomSmart() {/' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
+          sed -i 's/view.resetZoom()/view.resetZoomSmart()/g' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
+          sed -i 's/^                currentPage = page$/                this@ReaderActivity.currentPage = page/' app/src/main/java/com/malindu/pdfpro/ReaderActivity.kt
           grep -q 'class ProPdfView' app/src/main/java/com/malindu/pdfpro/ProPdfView.kt
           grep -q 'versionName = "1.3.0"' app/build.gradle.kts
 
