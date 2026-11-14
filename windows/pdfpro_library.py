@@ -39,6 +39,10 @@ class Library:
             opened TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0,
             page INTEGER NOT NULL DEFAULT 0, bookmarks TEXT DEFAULT '[]'
         )""")
+        # Existing users retain their documents; migrate without resetting the DB.
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(documents)")}
+        if "view_state" not in cols:
+            self.conn.execute("ALTER TABLE documents ADD COLUMN view_state TEXT DEFAULT '{}'")
         self.conn.commit()
 
     def all(self, term="", sort="Recent", favorites=False):
@@ -104,6 +108,25 @@ class Library:
         self.conn.execute("UPDATE documents SET page=? WHERE id=?", (int(page), key))
         self.conn.commit()
 
+    def mark_view(self, key, page, zoom, center_x, center_y):
+        """Store exact reading position; committed during use, not just on exit."""
+        state = {"zoom": float(zoom), "center_x": float(center_x),
+                 "center_y": float(center_y)}
+        self.conn.execute(
+            "UPDATE documents SET page=?, view_state=? WHERE id=?",
+            (int(page), json.dumps(state), key))
+        self.conn.commit()
+
+    def view(self, key):
+        rec = self.get(key)
+        if not rec:
+            return {}
+        try:
+            state = json.loads(rec.get("view_state") or "{}")
+            return state if isinstance(state, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
     def favorite(self, key, state):
         self.conn.execute("UPDATE documents SET favorite=? WHERE id=?", (int(bool(state)), key))
         self.conn.commit()
@@ -133,7 +156,11 @@ class Library:
             if not doc:
                 continue
             try:
-                Path(doc["stored"]).unlink(missing_ok=True)
+                owned = Path(doc["stored"])
+                owned.unlink(missing_ok=True)
+                owned.with_name(owned.name + ".recovery.pdf").unlink(missing_ok=True)
+                for pending in owned.parent.glob(owned.name + ".saving-*.pdf"):
+                    pending.unlink(missing_ok=True)
             except OSError:
                 # Do not lose the DB record when the file cannot be deleted.
                 continue
