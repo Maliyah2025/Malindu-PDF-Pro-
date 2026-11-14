@@ -1,0 +1,83 @@
+name: Build Windows 10 x64 EXE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-exe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Install Windows runtime dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r windows/requirements.txt
+
+      - name: Python syntax check
+        shell: pwsh
+        run: |
+          python -m py_compile windows/MalinduPDFPro.py windows/pdfpro_library.py windows/pdfpro_viewer.py windows/smoke_test.py
+
+      - name: Run functional Windows smoke tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python windows/smoke_test.py
+
+      - name: Generate Windows application icon
+        shell: pwsh
+        run: python windows/make_icon.py
+
+      - name: Package standalone Windows 10/11 x64 EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Malindu_PDF_Pro_Windows_x64 --icon windows/icon.ico --paths windows --hidden-import PySide6.QtPrintSupport --hidden-import fitz --collect-submodules pymupdf --distpath dist --workpath build --specpath build windows/MalinduPDFPro.py
+          if (!(Test-Path dist/Malindu_PDF_Pro_Windows_x64.exe)) { throw "EXE missing" }
+          $exe = Get-Item dist/Malindu_PDF_Pro_Windows_x64.exe
+          Write-Host "Built EXE bytes: $($exe.Length)"
+          if ($exe.Length -lt 10000000) { throw "Unexpectedly small EXE: dependencies may be missing" }
+          Get-FileHash dist/Malindu_PDF_Pro_Windows_x64.exe -Algorithm SHA256
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Malindu-PDF-Pro-Windows-x64
+          path: dist/Malindu_PDF_Pro_Windows_x64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish direct EXE download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-build-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Malindu PDF Pro Windows x64 Build ${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          files: dist/Malindu_PDF_Pro_Windows_x64.exe
+          body: |
+            Standalone offline PDF reader for Windows 10/11 64-bit.
+            Download Malindu_PDF_Pro_Windows_x64.exe and double-click to run.
+            No Python, Android emulator, or internet connection required.
+            Features: persistent PDF library; continuous scroll; Ctrl+wheel zoom;
+            full-screen focus mode (F11); pen, highlighter, text and shape annotations;
+            favorites, rename, bulk deletion, PDF merge and extract, search and print.
+            Unsigned EXE: Microsoft SmartScreen may prompt on first launch.
+            Your documents remain on your PC. Back up your PDF library before uninstalling.
