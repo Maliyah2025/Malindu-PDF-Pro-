@@ -2,7 +2,7 @@ name: Build Windows 10 x64 EXE
 
 on:
   push:
-    branches: [main]
+    branches: [codex/pdf-windows-fixes]
     paths:
       - "windows/**"
       - ".github/workflows/windows-exe.yml"
@@ -66,20 +66,17 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Publish direct EXE download
-        uses: softprops/action-gh-release@v2
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found" }
+          & $compiler windows/setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: windows-build-${{ github.run_number }}-${{ github.run_attempt }}
-          name: Malindu PDF Pro Windows x64 Build ${{ github.run_number }}
-          prerelease: true
-          generate_release_notes: false
-          files: dist/Malindu_PDF_Pro_Windows_x64.exe
-          body: |
-            Standalone offline PDF reader for Windows 10/11 64-bit.
-            Download Malindu_PDF_Pro_Windows_x64.exe and double-click to run.
-            No Python, Android emulator, or internet connection required.
-            Features: persistent PDF library; continuous scroll; Ctrl+wheel zoom;
-            full-screen focus mode (F11); pen, highlighter, text and shape annotations;
-            favorites, rename, bulk deletion, PDF merge and extract, search and print.
-            Unsigned EXE: Microsoft SmartScreen may prompt on first launch.
-            Your documents remain on your PC. Back up your PDF library before uninstalling.
+          name: Malindu-PDF-Pro-Setup-x64
+          path: dist/Malindu_PDF_Pro_Setup_x64.exe
+          if-no-files-found: error
+          compression-level: 0

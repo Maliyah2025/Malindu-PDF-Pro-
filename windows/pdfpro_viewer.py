@@ -5,6 +5,7 @@ import math
 import os
 import shutil
 import uuid
+import time
 from pathlib import Path
 
 import fitz
@@ -377,13 +378,14 @@ class PDFCanvas(QGraphicsView):
             annot.set_opacity(0.23 if t == "highlight" else 0.95)
             annot.update()
             self.undo_stack.append((idx, annot.xref))
-            self._save_changes()
+            del annot, page
+            self._save_changes(idx)
             self.operation_done.emit("Annotation saved to your PDF")
         except Exception as exc:
             self.error.emit(f"Annotation could not be saved: {exc}")
         event.accept()
 
-    def _save_changes(self):
+    def _save_changes(self, changed_page=None):
         """Durably autosave every completed action, including damaged/repaired PDFs.
 
         MuPDF refuses incremental writes on a repaired document (error code 4).
@@ -425,21 +427,28 @@ class PDFCanvas(QGraphicsView):
             self.pdf.close()
             self.pdf = None
             try:
-                os.replace(staged, target)
+                for attempt in range(10):
+                    try:
+                        os.replace(staged, target)
+                        break
+                    except PermissionError:
+                        if attempt == 9:
+                            raise
+                        time.sleep(0.15)
             except Exception:
                 self.pdf = fitz.open(str(target))
                 raise RuntimeError("Could not replace the saved PDF. "
                                    f"Recovery file is available at: {staged}")
             self.pdf = fitz.open(str(target))
-            self._make_layout()
             self.last_page = current_page
             self.centerOn(current_center)
             self._emit_page()
 
         # Force fresh tiles so the annotation immediately appears.
-        self.render_scales.clear()
-        for item in self.pix_items:
-            item.setPixmap(QPixmap())
+        if changed_page is None:
+            self.render_scales.clear()
+        else:
+            self.render_scales.pop(changed_page, None)
         self._schedule_render()
 
     def insert_text(self, index, scene_pos, note=False):
@@ -459,7 +468,8 @@ class PDFCanvas(QGraphicsView):
                     self.pen_color.redF(), self.pen_color.greenF(), self.pen_color.blueF()))
             a.update()
             self.undo_stack.append((index, a.xref))
-            self._save_changes()
+            del a, page
+            self._save_changes(index)
             self.operation_done.emit("Text annotation saved")
         except Exception as exc:
             self.error.emit(str(exc))
@@ -473,7 +483,8 @@ class PDFCanvas(QGraphicsView):
                 zone += (-5, -5, 5, 5)
                 if zone.contains(p):
                     page.delete_annot(annot)
-                    self._save_changes()
+                    del annot, page
+                    self._save_changes(index)
                     self.operation_done.emit("Annotation removed")
                     return
             self.operation_done.emit("Tap a drawing or annotation to erase it")
@@ -490,7 +501,8 @@ class PDFCanvas(QGraphicsView):
             for annot in list(page.annots() or []):
                 if annot.xref == xref:
                     page.delete_annot(annot)
-                    self._save_changes()
+                    del annot, page
+                    self._save_changes(idx)
                     self.operation_done.emit("Last annotation undone")
                     return
         except Exception as exc:
